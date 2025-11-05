@@ -1,0 +1,122 @@
+services:
+  postgresql:
+    container_name: temporal-postgresql
+    environment:
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_DB: temporal
+    image: postgres:13
+    networks:
+      - temporal-network
+    ports:
+      - 5432:5432
+    volumes:
+      - temporal_postgresql_data:/var/lib/postgresql/data
+
+  temporal:
+    container_name: temporal
+    depends_on:
+      - postgresql
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgresql
+    image: temporalio/auto-setup:latest
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address $(hostname -i):7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - temporal-network
+    ports:
+      - 7233:7233
+
+  temporal-admin-tools:
+    container_name: temporal-admin-tools
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    image: temporalio/admin-tools:latest
+    networks:
+      - temporal-network
+    stdin_open: true
+    tty: true
+
+  temporal-ui:
+    container_name: temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    image: temporalio/ui:latest
+    networks:
+      - temporal-network
+    ports:
+      - 8080:8080
+
+  power_of_2_service:
+    build:
+      context: .
+      dockerfile: ./consumers/power_of_2_python/Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - ACTIVITY_1_WAIT_TIMEOUT=60
+    networks:
+      - temporal-network
+    deploy:
+      replicas: 2
+
+  power_of_4_service:
+    build:
+      context: ./consumers/power_of_4_golang
+      dockerfile: Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - ACTIVITY_2_WAIT_TIMEOUT=6
+    networks:
+      - temporal-network
+
+  power_of_6_service:
+    build:
+      context: ./consumers/power_of_6_nodejs
+      dockerfile: Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - ACTIVITY_3_WAIT_TIMEOUT=5
+    networks:
+      - temporal-network
+
+  producer_service:
+    build:
+      context: .
+      dockerfile: ./producers/Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    networks:
+      - temporal-network
+    ports:
+      - 8000:8000
+networks:
+  temporal-network:
+    driver: bridge
+
+volumes:
+  temporal_postgresql_data:
